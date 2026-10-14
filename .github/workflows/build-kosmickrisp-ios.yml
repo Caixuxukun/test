@@ -1,0 +1,95 @@
+name: Build KosmicKrisp iOS dylib
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.gitlab-ci/**'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      ios_version:
+        description: 'Target iOS Version'
+        required: true
+        default: '26.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Build KosmicKrisp (iOS ${{ inputs.ios_version || '26.0' }} arm64)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Select Xcode Version
+        run: |
+          echo "Available Xcode installations:"
+          ls -d /Applications/Xcode* || true
+          # Default active Xcode on macos-14 is Xcode 15 or 16
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Build Dependencies
+        run: |
+          brew install ninja pkg-config
+          pip install --upgrade meson mako pyyaml packaging
+
+      - name: Build KosmicKrisp Standalone dylib
+        run: |
+          chmod +x ./build_kosmickrisp_ios.sh
+          IOS_TARGET_VERSION="${{ inputs.ios_version || '26.0' }}" ./build_kosmickrisp_ios.sh
+
+      - name: Inspect and Verify Binary
+        run: |
+          DYLIB="build-ios-arm64/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
+          echo "==> File details:"
+          file "${DYLIB}"
+
+          echo "==> Architecture & Platform Load Commands:"
+          otool -l "${DYLIB}" | grep -A 4 -E "(LC_BUILD_VERSION|LC_VERSION_MIN)" || true
+
+          echo "==> Linked Frameworks / Libraries:"
+          otool -L "${DYLIB}"
+
+          echo "==> Exported Vulkan Symbols:"
+          nm -gU "${DYLIB}" | grep -E "_(vkGetInstanceProcAddr|vkCreateInstance|vk_icdGetInstanceProcAddr)" || true
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p dist
+          DYLIB="build-ios-arm64/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
+          cp "${DYLIB}" dist/libvulkan_kosmickrisp.dylib
+          # Also supply libvulkan.dylib for launchers that load 'libvulkan.dylib'
+          cp "${DYLIB}" dist/libvulkan.dylib
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KosmicKrisp-iOS-${{ inputs.ios_version || '26.0' }}-arm64
+          path: dist/
+          retention-days: 14
+
+      - name: Release (on tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/libvulkan_kosmickrisp.dylib
+            dist/libvulkan.dylib
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
