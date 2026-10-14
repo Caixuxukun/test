@@ -1,41 +1,30 @@
 #!/usr/bin/env bash
-# ===============================================================================
-# Build Automation Script: KosmicKrisp Vulkan Driver (.dylib) for iOS 26 arm64
-# Targeted for iOS Minecraft Java Launcher Frameworks (e.g., PojavLauncher / LWJGL)
-# ===============================================================================
 
 set -euo pipefail
 
-# ------------------------------------------------------------------------------
-# 1. Directory Context
-# ------------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MESA_DIR="${MESA_DIR:-${SCRIPT_DIR}}"
-echo "==> [1/6] Navigating to Mesa repository: ${MESA_DIR}"
+echo "==> [1/7] Navigating to Mesa repository: ${MESA_DIR}"
 cd "${MESA_DIR}"
 
 BUILD_DIR="${MESA_DIR}/build-ios-arm64"
+HOST_BUILD_DIR="${MESA_DIR}/build-host-tools"
+HOST_TOOLS_BIN="${HOST_BUILD_DIR}/tools-bin"
 CROSS_FILE="${MESA_DIR}/ios_arm64_cross.ini"
 
-# ------------------------------------------------------------------------------
-# 2. Environment Discovery
-# ------------------------------------------------------------------------------
-echo "==> [2/6] Discovering iPhoneOS SDK environment..."
+echo "==> [2/7] Discovering iPhoneOS SDK environment..."
 
-IPHONEOS_SDK_PATH=""
+IPHONEOS_SDK_PATH="${IPHONEOS_SDK_PATH:-}"
 
-# A. Check if user passed IPHONEOS_SDK_PATH as an environment variable
-if [ -n "${IPHONEOS_SDK_PATH:-}" ] && [ -d "${IPHONEOS_SDK_PATH}" ]; then
+if [ -n "${IPHONEOS_SDK_PATH}" ] && [ -d "${IPHONEOS_SDK_PATH}" ]; then
     echo "    Using iPhoneOS SDK from environment: ${IPHONEOS_SDK_PATH}"
 
-# B. If on macOS with Xcode / xcrun available, query xcrun
 elif command -v xcrun &>/dev/null; then
     IPHONEOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null || true)
     if [ -n "${IPHONEOS_SDK_PATH}" ] && [ -d "${IPHONEOS_SDK_PATH}" ]; then
         echo "    Discovered iPhoneOS SDK via xcrun: ${IPHONEOS_SDK_PATH}"
     fi
 
-# C. If on Linux (or xcrun unavailable), search common SDK directories
 else
     CANDIDATE_PATHS=(
         "${HOME}/iPhoneOS.sdk"
@@ -69,19 +58,34 @@ if [ -z "${IPHONEOS_SDK_PATH}" ] || [ ! -d "${IPHONEOS_SDK_PATH}" ]; then
 fi
 echo "    Target SDK: ${IPHONEOS_SDK_PATH}"
 
-# ------------------------------------------------------------------------------
-# 3. Core Vulkan Symbol Export Verification / Patch
-# Ensure standalone .dylib exports vkGetInstanceProcAddr and vkCreateInstance
-# ------------------------------------------------------------------------------
-echo "==> [3/6] Ensuring core Vulkan symbols are exported for launcher dynamic loading..."
+if command -v xcrun &>/dev/null; then
+    SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || true)"
+    SDK_MAJOR="${SDK_VERSION%%.*}"
+    echo "    iPhoneOS SDK version: ${SDK_VERSION:-unknown}"
+    if [ -n "${SDK_MAJOR}" ] && [ "${SDK_MAJOR}" -lt 26 ] 2>/dev/null; then
+        echo "WARNING: iPhoneOS SDK ${SDK_VERSION} is older than 26; Metal 4 headers are" >&2
+        echo "         missing, so compiling the driver will fail. Select Xcode 26+." >&2
+    fi
+fi
+
+CC_BIN="clang"
+CXX_BIN="clang++"
+if command -v xcrun &>/dev/null; then
+    _cc="$(xcrun --sdk iphoneos --find clang 2>/dev/null || true)"
+    _cxx="$(xcrun --sdk iphoneos --find clang++ 2>/dev/null || true)"
+    [ -n "${_cc}" ] && [ -x "${_cc}" ] && CC_BIN="${_cc}"
+    [ -n "${_cxx}" ] && [ -x "${_cxx}" ] && CXX_BIN="${_cxx}"
+fi
+echo "    iOS C compiler:   ${CC_BIN}"
+echo "    iOS C++ compiler: ${CXX_BIN}"
+
+echo "==> [3/7] Ensuring core Vulkan symbols are exported for launcher dynamic loading..."
 KK_INSTANCE_C="${MESA_DIR}/src/kosmickrisp/vulkan/kk_instance.c"
 
-# Check if public vkGetInstanceProcAddr and vkCreateInstance wrappers exist; inject if missing
 if ! grep -q "PUBLIC VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr" "${KK_INSTANCE_C}"; then
     echo "    Patching ${KK_INSTANCE_C} with public standalone Vulkan exports..."
     cat << 'EOF' >> "${KK_INSTANCE_C}"
 
-/* Standalone dynamic loader exports for launcher frameworks (LWJGL / dlsym) */
 PUBLIC VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetInstanceProcAddr(VkInstance instance, const char *pName)
 {
@@ -115,25 +119,93 @@ else
     echo "    Core Vulkan symbols already defined in kk_instance.c."
 fi
 
-# ------------------------------------------------------------------------------
-# 4. Cross-Compilation Setup (Meson Cross File)
-# ------------------------------------------------------------------------------
-echo "==> [4/6] Generating Meson cross-compilation file: ${CROSS_FILE}"
+if grep -q "'apple'" "${MESA_DIR}/meson.options" 2>/dev/null; then
+    PLATFORM_FLAG="-Dplatforms=apple"
+else
+    PLATFORM_FLAG="-Dplatforms=macos"
+fi
+echo "    Using platform configuration: ${PLATFORM_FLAG}"
+
+host_tools_present() {
+    [ -x "$1/mesa_clc" ] && [ -x "$1/vtn_bindgen2" ] && [ -x "$1/kk_clc" ]
+}
+
+if [ -n "${HOST_TOOLS_DIR:-}" ] && host_tools_present "${HOST_TOOLS_DIR}"; then
+    echo "==> [4/7] Using prebuilt host tools from HOST_TOOLS_DIR=${HOST_TOOLS_DIR}"
+    HOST_TOOLS_BIN="${HOST_TOOLS_DIR}"
+else
+    echo "==> [4/7] Building host-side compiler tools natively (mesa_clc, vtn_bindgen2, kk_clc)..."
+
+    if [ "$(uname -s)" != "Darwin" ]; then
+        echo "ERROR: building the host tools needs a macOS host (KosmicKrisp is Darwin-only)." >&2
+        echo "       Build them on a Mac and re-run with HOST_TOOLS_DIR=/path/to/dir" >&2
+        echo "       containing mesa_clc, vtn_bindgen2 and kk_clc." >&2
+        exit 1
+    fi
+
+    if command -v brew &>/dev/null; then
+        LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
+        if [ -n "${LLVM_PREFIX}" ] && [ -d "${LLVM_PREFIX}/bin" ]; then
+            export PATH="${LLVM_PREFIX}/bin:${PATH}"
+        fi
+    fi
+    if ! command -v llvm-config &>/dev/null; then
+        echo "ERROR: llvm-config not found. Run: brew install llvm libclc spirv-llvm-translator spirv-tools" >&2
+        exit 1
+    fi
+    echo "    Host LLVM: $(llvm-config --version) ($(command -v llvm-config))"
+
+    rm -rf "${HOST_BUILD_DIR}"
+
+    meson setup "${HOST_BUILD_DIR}" \
+        ${PLATFORM_FLAG} \
+        -Dllvm=enabled \
+        -Dmesa-clc=enabled \
+        -Dprecomp-compiler=enabled \
+        -Dinstall-mesa-clc=true \
+        -Dinstall-precomp-compiler=true \
+        -Dvulkan-drivers=kosmickrisp \
+        -Dgallium-drivers= \
+        -Dbuildtype=release \
+        -Dopengl=false \
+        -Degl=disabled \
+        -Dglx=disabled \
+        -Dgbm=disabled \
+        -Dzstd=disabled \
+        --prefer-static
+
+    ninja -C "${HOST_BUILD_DIR}" \
+        src/compiler/clc/mesa_clc \
+        src/compiler/spirv/vtn_bindgen2 \
+        src/kosmickrisp/clc/kk_clc
+
+    mkdir -p "${HOST_TOOLS_BIN}"
+    cp "${HOST_BUILD_DIR}/src/compiler/clc/mesa_clc"          "${HOST_TOOLS_BIN}/"
+    cp "${HOST_BUILD_DIR}/src/compiler/spirv/vtn_bindgen2"    "${HOST_TOOLS_BIN}/"
+    cp "${HOST_BUILD_DIR}/src/kosmickrisp/clc/kk_clc"         "${HOST_TOOLS_BIN}/"
+    echo "    Host tools installed in: ${HOST_TOOLS_BIN}"
+fi
+
+if ! host_tools_present "${HOST_TOOLS_BIN}"; then
+    echo "ERROR: host tools missing in ${HOST_TOOLS_BIN} (need mesa_clc, vtn_bindgen2, kk_clc)." >&2
+    exit 1
+fi
+
+export PATH="${HOST_TOOLS_BIN}:${PATH}"
+
+echo "==> [5/7] Generating Meson cross-compilation file: ${CROSS_FILE}"
 IOS_TARGET_VERSION="${IOS_TARGET_VERSION:-26.0}"
 TARGET_TRIPLE="arm64-apple-ios${IOS_TARGET_VERSION}"
 echo "    Targeting iOS version: ${IOS_TARGET_VERSION} (${TARGET_TRIPLE})"
 
 cat << EOF > "${CROSS_FILE}"
 [binaries]
-c = 'clang'
-cpp = 'clang++'
-objc = 'clang'
-objcpp = 'clang++'
+c = '${CC_BIN}'
+cpp = '${CXX_BIN}'
+objc = '${CC_BIN}'
+objcpp = '${CXX_BIN}'
 ar = 'ar'
 strip = 'strip'
-# Provide a usable pkg-config for Meson host/tool detection instead of 'false'
-# which causes Meson to try /usr/bin/false and fail. We rely on PATH so 'pkg-config'
-# will resolve to the host pkg-config installed by CI (Homebrew).
 pkg-config = 'pkg-config'
 
 [built-in options]
@@ -157,35 +229,20 @@ cpu = 'arm64'
 endian = 'little'
 EOF
 
-# ------------------------------------------------------------------------------
-# 5. Meson Configuration and Setup
-# ------------------------------------------------------------------------------
-echo "==> [5/6] Configuring Meson build for KosmicKrisp..."
+echo "==> [6/7] Configuring Meson build for KosmicKrisp (iOS cross)..."
 
-# In Mesa's meson.options, Apple platforms (Metal/QuartzCore/Darwin) map to 'macos'.
-# Check if current tree supports 'apple' or 'macos' to satisfy -Dplatforms= flag safely.
-if grep -q "'apple'" "${MESA_DIR}/meson.options" 2>/dev/null; then
-    PLATFORM_FLAG="-Dplatforms=apple"
-else
-    PLATFORM_FLAG="-Dplatforms=macos"
-fi
-echo "    Using platform configuration: ${PLATFORM_FLAG}"
-
-# Wipe build directory if requested or reconfiguring
 if [ -d "${BUILD_DIR}" ]; then
     echo "    Existing build directory found; wiping for clean build..."
     rm -rf "${BUILD_DIR}"
 fi
 
-# Disable LLVM to avoid Meson trying to find/build an LLVM subproject when
-# it's not required for this iOS standalone dylib build. This is the minimal
-# fix to prevent meson configure from failing when no llvm.wrap/subproject is
-# available. If you need LLVM later, add a proper subproject/llvm.wrap or set
-# -Dllvm=true and ensure llvm-config is available on the host.
 meson setup "${BUILD_DIR}" \
     --cross-file "${CROSS_FILE}" \
     ${PLATFORM_FLAG} \
-    -Dllvm=false \
+    -Dllvm=disabled \
+    -Dmesa-clc=system \
+    -Dprecomp-compiler=system \
+    -Dspirv-tools=disabled \
     -Dgallium-drivers= \
     -Dvulkan-drivers=kosmickrisp \
     -Dbuildtype=release \
@@ -198,10 +255,7 @@ meson setup "${BUILD_DIR}" \
     -Dzstd=disabled \
     --prefer-static
 
-# ------------------------------------------------------------------------------
-# 6. Standalone Artifact Compilation & Symbol Verification
-# ------------------------------------------------------------------------------
-echo "==> [6/6] Compiling standalone dynamic library with Ninja..."
+echo "==> [7/7] Compiling standalone dynamic library with Ninja..."
 ninja -C "${BUILD_DIR}" src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib
 
 OUTPUT_DYLIB="${BUILD_DIR}/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
@@ -212,7 +266,6 @@ if [ -f "${OUTPUT_DYLIB}" ]; then
     echo "Output Artifact: ${OUTPUT_DYLIB}"
     echo "=============================================================================="
 
-    # Perform symbol inspection if nm / otool are available
     if command -v nm &>/dev/null; then
         echo "Exported Core Vulkan Symbols in Artifact:"
         nm -gU "${OUTPUT_DYLIB}" | grep -E "_(vkGetInstanceProcAddr|vkCreateInstance|vk_icdGetInstanceProcAddr)" || true

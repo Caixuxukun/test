@@ -22,7 +22,8 @@ permissions:
 jobs:
   build-ios:
     name: Build KosmicKrisp (iOS ${{ inputs.ios_version || '26.0' }} arm64)
-    runs-on: macos-14
+    runs-on: macos-26
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -34,10 +35,19 @@ jobs:
         run: |
           echo "Available Xcode installations:"
           ls -d /Applications/Xcode* || true
-          # Default active Xcode on macos-14 is Xcode 15 or 16
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          XCODE_APP="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -z "${XCODE_APP}" ]; then
+            XCODE_APP="/Applications/Xcode.app"
+          fi
+          echo "Using ${XCODE_APP}"
+          sudo xcode-select -s "${XCODE_APP}/Contents/Developer"
           xcrun --sdk iphoneos --show-sdk-path
-          xcrun --sdk iphoneos --show-sdk-version
+          SDK_VER="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iPhoneOS SDK version: ${SDK_VER}"
+          if [ "${SDK_VER%%.*}" -lt 26 ]; then
+            echo "::error::iPhoneOS SDK ${SDK_VER} is too old; KosmicKrisp needs the iOS 26 SDK (Metal 4)."
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -46,25 +56,39 @@ jobs:
 
       - name: Install Build Dependencies
         run: |
-          brew update
-          # Install host tools needed by Meson: llvm (for llvm-config >= 15) and pkg-config
-          brew install llvm pkg-config ninja
-          # Make Homebrew LLVM and pkg-config visible in PATH for the job
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install --force-bottle llvm libclc spirv-llvm-translator spirv-tools pkg-config ninja cmake
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
-          # Ensure Meson/pkgs pick up the correct pkg-config
           echo "PKG_CONFIG=/opt/homebrew/bin/pkg-config" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/openssl/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          # Provide include/lib hints for host LLVM if tools/scripts need them
+          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig:/opt/homebrew/opt/openssl/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
           echo "CPPFLAGS=-I/opt/homebrew/opt/llvm/include" >> $GITHUB_ENV
           echo "LDFLAGS=-L/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
 
           pip install --upgrade meson mako pyyaml packaging
 
+          echo "==> Host toolchain versions:"
+          /opt/homebrew/opt/llvm/bin/llvm-config --version
+          pkg-config --modversion LLVMSPIRVLib || true
+          pkg-config --modversion SPIRV-Tools || true
+          meson --version
+
       - name: Build KosmicKrisp Standalone dylib
         run: |
           chmod +x ./build_kosmickrisp_ios.sh
           IOS_TARGET_VERSION="${{ inputs.ios_version || '26.0' }}" ./build_kosmickrisp_ios.sh
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosmickrisp-build-logs
+          path: |
+            build-host-tools/meson-logs/
+            build-ios-arm64/meson-logs/
+            build-ios-arm64/.ninja_log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Inspect and Verify Binary
         run: |
@@ -86,7 +110,6 @@ jobs:
           mkdir -p dist
           DYLIB="build-ios-arm64/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
           cp "${DYLIB}" dist/libvulkan_kosmickrisp.dylib
-          # Also supply libvulkan.dylib for launchers that load 'libvulkan.dylib'
           cp "${DYLIB}" dist/libvulkan.dylib
 
       - name: Upload Artifact
