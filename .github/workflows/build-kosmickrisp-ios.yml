@@ -46,7 +46,19 @@ jobs:
 
       - name: Install Build Dependencies
         run: |
-          brew install ninja pkg-config
+          brew update
+          # Install host tools needed by Meson: llvm (for llvm-config >= 15) and pkg-config
+          brew install llvm pkg-config ninja
+          # Make Homebrew LLVM and pkg-config visible in PATH for the job
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
+          # Ensure Meson/pkgs pick up the correct pkg-config
+          echo "PKG_CONFIG=/opt/homebrew/bin/pkg-config" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/openssl/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          # Provide include/lib hints for host LLVM if tools/scripts need them
+          echo "CPPFLAGS=-I/opt/homebrew/opt/llvm/include" >> $GITHUB_ENV
+          echo "LDFLAGS=-L/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
+
           pip install --upgrade meson mako pyyaml packaging
 
       - name: Build KosmicKrisp Standalone dylib
