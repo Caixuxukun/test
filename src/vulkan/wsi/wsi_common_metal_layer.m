@@ -8,6 +8,7 @@
 
 #include "vk_format.h"
 
+#include <TargetConditionals.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 
@@ -139,7 +140,9 @@ void
 wsi_metal_layer_set_immediate(const CAMetalLayer *metal_layer,
                               bool enable_immediate)
 {
+#if TARGET_OS_OSX
    metal_layer.displaySyncEnabled = !enable_immediate;
+#endif
 }
 
 VkResult
@@ -170,7 +173,9 @@ wsi_metal_layer_configure(const CAMetalLayer *metal_layer,
       metal_layer.maximumDrawableCount = image_count;
       metal_layer.drawableSize = (CGSize){.width = width, .height = height};
       metal_layer.opaque = enable_opaque;
+#if TARGET_OS_OSX
       metal_layer.displaySyncEnabled = !enable_immediate;
+#endif
       metal_layer.pixelFormat = metal_format;
 
       metal_layer.colorspace = cg_color_space;

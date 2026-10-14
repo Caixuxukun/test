@@ -213,10 +213,10 @@ c_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-
 cpp_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-O3', '-fPIC']
 objc_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-O3', '-fPIC', '-Wno-unguarded-availability-new']
 objcpp_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-O3', '-fPIC', '-Wno-unguarded-availability-new']
-c_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-Wl,-undefined,dynamic_lookup']
-cpp_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-Wl,-undefined,dynamic_lookup']
-objc_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-Wl,-undefined,dynamic_lookup']
-objcpp_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-Wl,-undefined,dynamic_lookup']
+c_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}']
+cpp_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}']
+objc_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}']
+objcpp_link_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}']
 
 [properties]
 needs_exe_wrapper = true

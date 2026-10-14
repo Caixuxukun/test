@@ -14,8 +14,17 @@
 #include "util/u_memory.h"
 
 #if DETECT_OS_APPLE
+#include <TargetConditionals.h>
 #include <mach/mach_init.h>
+#if TARGET_OS_OSX
 #include <mach/mach_vm.h>
+#else
+#include <mach/vm_map.h>
+#define mach_vm_address_t vm_address_t
+#define mach_vm_remap vm_remap
+#define mach_vm_map vm_map
+#define mach_vm_deallocate vm_deallocate
+#endif
 #endif /* DETECT_OS_APPLE */
 
 VkResult
