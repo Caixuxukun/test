@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# ==============================================================================
+# ===============================================================================
 # Build Automation Script: KosmicKrisp Vulkan Driver (.dylib) for iOS 26 arm64
 # Targeted for iOS Minecraft Java Launcher Frameworks (e.g., PojavLauncher / LWJGL)
-# ==============================================================================
+# ===============================================================================
 
 set -euo pipefail
 
@@ -131,7 +131,10 @@ objc = 'clang'
 objcpp = 'clang++'
 ar = 'ar'
 strip = 'strip'
-pkg-config = 'false'
+# Provide a usable pkg-config for Meson host/tool detection instead of 'false'
+# which causes Meson to try /usr/bin/false and fail. We rely on PATH so 'pkg-config'
+# will resolve to the host pkg-config installed by CI (Homebrew).
+pkg-config = 'pkg-config'
 
 [built-in options]
 c_args = ['-target', '${TARGET_TRIPLE}', '-isysroot', '${IPHONEOS_SDK_PATH}', '-miphoneos-version-min=${IOS_TARGET_VERSION}', '-O3', '-fPIC']
@@ -174,9 +177,15 @@ if [ -d "${BUILD_DIR}" ]; then
     rm -rf "${BUILD_DIR}"
 fi
 
+# Disable LLVM to avoid Meson trying to find/build an LLVM subproject when
+# it's not required for this iOS standalone dylib build. This is the minimal
+# fix to prevent meson configure from failing when no llvm.wrap/subproject is
+# available. If you need LLVM later, add a proper subproject/llvm.wrap or set
+# -Dllvm=true and ensure llvm-config is available on the host.
 meson setup "${BUILD_DIR}" \
     --cross-file "${CROSS_FILE}" \
     ${PLATFORM_FLAG} \
+    -Dllvm=false \
     -Dgallium-drivers= \
     -Dvulkan-drivers=kosmickrisp \
     -Dbuildtype=release \
