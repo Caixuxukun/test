@@ -256,7 +256,7 @@ meson setup "${BUILD_DIR}" \
     --prefer-static
 
 echo "==> [7/7] Compiling standalone dynamic library with Ninja..."
-ninja -C "${BUILD_DIR}" src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib
+ninja -k 0 -C "${BUILD_DIR}" src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib 2>&1 | tee "${MESA_DIR}/ninja-output.log"
 
 OUTPUT_DYLIB="${BUILD_DIR}/src/kosmickrisp/vulkan/libvulkan_kosmickrisp.dylib"
 

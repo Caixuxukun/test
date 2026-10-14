@@ -6,6 +6,8 @@
 
 #include "mtl_device.h"
 
+#include <TargetConditionals.h>
+
 /* TODO_KOSMICKRISP Remove */
 #include "kk_image_layout.h"
 #include "kk_private.h"
@@ -21,7 +23,13 @@ mtl_device_create()
    mtl_device *device = nil;
 
    @autoreleasepool {
+#if TARGET_OS_OSX
       NSArray<id<MTLDevice>> *devs = [MTLCopyAllDevices() autorelease];
+#else
+      id<MTLDevice> default_dev = MTLCreateSystemDefaultDevice();
+      NSArray<id<MTLDevice>> *devs =
+         default_dev ? @[[default_dev autorelease]] : @[];
+#endif
       uint32_t device_count = [devs count];
       
       for (uint32_t i = 0u; i < device_count; ++i) {

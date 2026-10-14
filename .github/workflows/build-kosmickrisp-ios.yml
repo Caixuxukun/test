@@ -86,7 +86,7 @@ jobs:
           path: |
             build-host-tools/meson-logs/
             build-ios-arm64/meson-logs/
-            build-ios-arm64/.ninja_log
+            ninja-output.log
           if-no-files-found: ignore
           retention-days: 7
 
